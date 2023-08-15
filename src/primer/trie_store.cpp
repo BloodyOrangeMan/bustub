@@ -5,26 +5,63 @@ namespace bustub {
 
 template <class T>
 auto TrieStore::Get(std::string_view key) -> std::optional<ValueGuard<T>> {
-  // Pseudo-code:
-  // (1) Take the root lock, get the root, and release the root lock. Don't lookup the value in the
-  //     trie while holding the root lock.
+  // (1) Take the root lock, get the root, and release the root lock.
+  Trie root;
+  {
+      std::lock_guard<std::mutex> lock(root_lock_);
+      root = root_;
+  }
+
   // (2) Lookup the value in the trie.
-  // (3) If the value is found, return a ValueGuard object that holds a reference to the value and the
-  //     root. Otherwise, return std::nullopt.
-  throw NotImplementedException("TrieStore::Get is not implemented.");
+  auto value = root.Get<T>(key);
+  if (!value) {
+      // not found
+      return std::nullopt;
+  }
+
+  // (3) If the value is found, return a ValueGuard object.
+  return std::make_optional(ValueGuard(std::move(root), *value));
 }
 
 template <class T>
 void TrieStore::Put(std::string_view key, T value) {
-  // You will need to ensure there is only one writer at a time. Think of how you can achieve this.
-  // The logic should be somehow similar to `TrieStore::Get`.
-  throw NotImplementedException("TrieStore::Put is not implemented.");
+    std::unique_lock write_guard(write_lock_);
+
+    // get the old root
+    Trie root;
+    {
+        std::lock_guard<std::mutex> lock(root_lock_);
+        root = root_;
+    }
+
+    // do the operation
+    root = root.Put(key, std::move(value));
+
+    // swap in old root
+    {
+        std::lock_guard<std::mutex> lock(root_lock_);
+        root_ = std::move(root);
+    }
 }
 
 void TrieStore::Remove(std::string_view key) {
-  // You will need to ensure there is only one writer at a time. Think of how you can achieve this.
-  // The logic should be somehow similar to `TrieStore::Get`.
-  throw NotImplementedException("TrieStore::Remove is not implemented.");
+    std::unique_lock write_guard(write_lock_);
+
+    // get the old root
+    Trie root;
+    {
+        std::lock_guard<std::mutex> lock(root_lock_);
+        root = root_;
+    }
+
+    // do the operation
+    root = root.Remove(key);
+
+    // swap in old root
+    {
+        std::lock_guard<std::mutex> lock(root_lock_);
+        root_ = std::move(root);
+    }
 }
 
 // Below are explicit instantiation of template functions.
