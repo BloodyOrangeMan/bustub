@@ -107,7 +107,7 @@ auto BufferPoolManager::UnpinPage(page_id_t page_id, bool is_dirty, [[maybe_unus
   if (page_table_.find(page_id) == page_table_.end()) {
     return false;
   }
-  Page& unpinned = pages_[page_table_[page_id]];
+  Page &unpinned = pages_[page_table_[page_id]];
   if (unpinned.pin_count_ <= 0) {
     return false;
   }
@@ -142,7 +142,7 @@ auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool {
   if (it == page_table_.end()) {
     return true;
   }
-  Page& target_page = pages_[it->second];
+  Page &target_page = pages_[it->second];
   if (target_page.pin_count_ > 0) {
     return false;
   }
