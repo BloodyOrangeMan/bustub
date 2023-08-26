@@ -72,9 +72,18 @@ class BPlusTree {
   // Returns true if this B+ tree has no keys and values.
   auto IsEmpty() const -> bool;
 
+  auto FindLeafNode(const KeyType &key) -> page_id_t;
+
   // Insert a key-value pair into this B+ tree.
   auto Insert(const KeyType &key, const ValueType &value, Transaction *txn = nullptr) -> bool;
 
+  auto InsertInLeaf(const KeyType &key, const ValueType &value, LeafPage *page) -> bool;
+
+  void InsertInParent(BPlusTreePage *old_node, const KeyType &middle_key, BPlusTreePage *new_node);
+
+  void SplitLeafNode(LeafPage *page, const KeyType &key, const ValueType &value);
+
+  void SplitInternalNode(InternalPage *page, const KeyType &key, page_id_t child_id);
   // Remove a key and its value from this B+ tree.
   void Remove(const KeyType &key, Transaction *txn);
 

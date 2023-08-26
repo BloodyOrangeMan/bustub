@@ -46,7 +46,15 @@ class BPlusTreePage {
   ~BPlusTreePage() = delete;
 
   auto IsLeafPage() const -> bool;
+  auto IsRootPage() const -> bool;
   void SetPageType(IndexPageType page_type);
+  void SetRootPage(bool is_root);
+
+  void SetParent(page_id_t parent);
+  auto GetParent() -> page_id_t;
+
+  void SetPage(page_id_t id);
+  auto GetPage() -> page_id_t;
 
   auto GetSize() const -> int;
   void SetSize(int size);
@@ -61,6 +69,9 @@ class BPlusTreePage {
   IndexPageType page_type_ __attribute__((__unused__));
   int size_ __attribute__((__unused__));
   int max_size_ __attribute__((__unused__));
+  bool is_root_{false};
+  page_id_t parent_id_{INVALID_PAGE_ID};
+  page_id_t self_id_{INVALID_PAGE_ID};
 };
 
 }  // namespace bustub
