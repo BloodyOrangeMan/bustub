@@ -62,6 +62,8 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   void SetAt(int index, const KeyType &key, const ValueType &value);
   void ShiftAt(int pos);
   auto FindPosition(const KeyType &key, const KeyComparator &comparator) const -> int;
+  auto Remove(int position) -> bool;
+  void Insert(int position, const KeyType &key, const ValueType &value);
 
   /**
    * @brief for test only return a string representing all keys in
@@ -89,6 +91,8 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   }
 
  private:
+  template <typename KeyType1, typename ValueType1, typename KeyComparator1>
+  friend class IndexIterator;
   page_id_t next_page_id_;
   // Flexible array member for page data.
   MappingType array_[0];

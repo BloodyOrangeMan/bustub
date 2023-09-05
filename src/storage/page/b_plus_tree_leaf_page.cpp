@@ -70,6 +70,29 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::ShiftAt(int pos) {
 }
 
 INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_LEAF_PAGE_TYPE::Remove(int position) -> bool {
+  if (position < 0 || position >= GetSize()) {
+    return false;  // Invalid position
+  }
+
+  // Shift keys and values to fill the gap
+  for (int i = position; i < GetSize() - 1; i++) {
+    array_[i].first = KeyAt(i + 1);
+    array_[i].second = ValueAt(i + 1);
+  }
+
+  IncreaseSize(-1);  // Decrease the size of the leaf page after removal
+  return true;       // Successfully removed      // Successfully removed
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+void B_PLUS_TREE_LEAF_PAGE_TYPE::Insert(int position, const KeyType &key, const ValueType &value) {
+  ShiftAt(position);
+  SetAt(position, key, value);
+  IncreaseSize(1);
+}
+
+INDEX_TEMPLATE_ARGUMENTS
 auto B_PLUS_TREE_LEAF_PAGE_TYPE::FindPosition(const KeyType &key, const KeyComparator &comparator) const -> int {
   int low = 0;  // start from 1 since 0 is reserved for the first child pointer
   int high = GetSize() - 1;

@@ -28,7 +28,7 @@ BPLUSTREE_TYPE::BPlusTree(std::string name, page_id_t header_page_id, BufferPool
 INDEX_TEMPLATE_ARGUMENTS
 auto BPLUSTREE_TYPE::IsEmpty() const -> bool {
   auto guard = bpm_->FetchPageRead(header_page_id_);
-  auto root_page = guard.As<BPlusTreeHeaderPage>();
+  auto root_page = guard.template As<BPlusTreeHeaderPage>();
   return root_page->root_page_id_ == INVALID_PAGE_ID;
 }
 /*****************************************************************************
@@ -42,8 +42,23 @@ auto BPLUSTREE_TYPE::IsEmpty() const -> bool {
 INDEX_TEMPLATE_ARGUMENTS
 auto BPLUSTREE_TYPE::GetValue(const KeyType &key, std::vector<ValueType> *result, Transaction *txn) -> bool {
   // Declaration of context instance.
-  Context ctx;
-  (void)ctx;
+  // Check for the tree's emptiness
+  if (IsEmpty()) {
+    return false;
+  }
+
+  // Find the leaf node which may contain the key
+  auto leaf_node_id = FindLeafNode(key);
+  auto leaf_guard = bpm_->FetchPageRead(leaf_node_id);  // Assuming FetchPageRead fetches the page in read mode
+  auto leaf_page = leaf_guard.template As<LeafPage>();  // NOLINT
+
+  int position = leaf_page->FindPosition(key, comparator_);
+
+  // If the position is valid and the key matches, get the value and push to the result
+  if (position < leaf_page->GetSize() && comparator_(leaf_page->KeyAt(position), key) == 0) {
+    result->push_back(leaf_page->ValueAt(position));  // Assuming ValueAt function retrieves value for given position
+    return true;
+  }
 
   return false;
 }
@@ -75,9 +90,7 @@ auto BPLUSTREE_TYPE::InsertInLeaf(const KeyType &key, const ValueType &value, Le
     return false;
   }
   int position = page->FindPosition(key, comparator_);
-  page->ShiftAt(position);
-  page->SetAt(position, key, value);
-  page->IncreaseSize(1);
+  page->Insert(position, key, value);
   return true;
 }
 
@@ -87,7 +100,7 @@ void BPLUSTREE_TYPE::InsertInParent(BPlusTreePage *old_node, const KeyType &midd
   if (old_node->IsRootPage()) {
     page_id_t new_root_id;
     auto new_root_guard = bpm_->NewPageGuarded(&new_root_id);
-    InternalPage *new_root = new_root_guard.AsMut<InternalPage>();  // NOLINT
+    InternalPage *new_root = new_root_guard.template AsMut<InternalPage>();  // NOLINT
     new_root->Init();
     new_root->SetRootPage(true);
     new_root->SetPage(new_root_id);
@@ -102,7 +115,7 @@ void BPLUSTREE_TYPE::InsertInParent(BPlusTreePage *old_node, const KeyType &midd
     old_node->SetParent(new_root_id);
 
     auto header_guard = bpm_->FetchPageWrite(header_page_id_);
-    auto header = header_guard.AsMut<BPlusTreeHeaderPage>();
+    auto header = header_guard.template AsMut<BPlusTreeHeaderPage>();
     header->root_page_id_ = new_root_id;
 
     return;
@@ -110,7 +123,7 @@ void BPLUSTREE_TYPE::InsertInParent(BPlusTreePage *old_node, const KeyType &midd
 
   // Get the parent of old_node
   auto parent_guard = bpm_->FetchPageWrite(old_node->GetParent());
-  InternalPage *parent = parent_guard.AsMut<InternalPage>();  // NOLINT
+  InternalPage *parent = parent_guard.template AsMut<InternalPage>();  // NOLINT
 
   // If parent has space, just insert the key
   if (parent->GetSize() < parent->GetMaxSize()) {
@@ -184,7 +197,7 @@ void BPLUSTREE_TYPE::SplitLeafNode(LeafPage *page, const KeyType &key, const Val
   // Create the new leaf node
   page_id_t new_leaf_id;
   auto new_page_guard = bpm_->NewPageGuarded(&new_leaf_id);
-  auto new_leaf = new_page_guard.AsMut<LeafPage>();
+  auto new_leaf = new_page_guard.template AsMut<LeafPage>();
   new_leaf->Init();
   new_leaf->SetMaxSize(leaf_max_size_);
   new_leaf->SetPage(new_leaf_id);
@@ -233,8 +246,8 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value, Transact
     page_id_t root_id;
     auto header_guard = bpm_->FetchPageWrite(header_page_id_);
     auto new_page_guard = bpm_->NewPageGuarded(&root_id);
-    auto header = header_guard.AsMut<BPlusTreeHeaderPage>();
-    LeafPage *root_page = new_page_guard.AsMut<LeafPage>();  // NOLINT
+    auto header = header_guard.template AsMut<BPlusTreeHeaderPage>();
+    LeafPage *root_page = new_page_guard.template AsMut<LeafPage>();  // NOLINT
     header->root_page_id_ = root_id;
     root_page->Init();
     root_page->SetRootPage(true);
@@ -269,10 +282,58 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value, Transact
  */
 INDEX_TEMPLATE_ARGUMENTS
 void BPLUSTREE_TYPE::Remove(const KeyType &key, Transaction *txn) {
-  // Declaration of context instance.
-  Context ctx;
-  (void)ctx;
+  if (IsEmpty()) {
+    return;
+  }
+
+  page_id_t leaf_node_id = FindLeafNode(key);
+  auto leaf_guard = bpm_->FetchPageWrite(leaf_node_id);
+  LeafPage *leaf_page = leaf_guard.template AsMut<LeafPage>();  // NOLINT
+
+  int position = leaf_page->FindPosition(key, comparator_);
+
+  if (position >= leaf_page->GetSize() || comparator_(leaf_page->KeyAt(position), key) != 0) {
+    // Key not found.
+    return;
+  }
+
+  // Remove the entry from the leaf node
+  leaf_page->Remove(position);
+
+  if (leaf_page->GetSize() < leaf_page->GetMinSize()) {
+    RedistributeOrMerge(leaf_page);
+  }
 }
+
+INDEX_TEMPLATE_ARGUMENTS
+void BPLUSTREE_TYPE::RedistributeOrMerge(BPlusTreePage *page) {
+  if (page->GetSize() >= page->GetMinSize()) {
+    return;  // No need to redistribute or merge
+  }
+
+  // Fetch the right sibling directly using GetNextPageId()
+  auto parent_guard = bpm_->FetchPageWrite(page->GetParent());
+  InternalPage *parent_page = parent_guard.template AsMut<InternalPage>();  // NOLINT
+  auto node_index = parent_page->ValueIndex(page->GetPage());
+  const int sibling_index = node_index == 0 ? 1 : node_index - 1;
+
+  // Fetch the page using the Buffer Pool Manager
+  auto sibling_page_guard = bpm_->FetchPageWrite(sibling_index);
+  LeafPage *sibling_page = sibling_page_guard.template AsMut<LeafPage>();  // NOLINT
+
+  if (sibling_page->GetSize() > sibling_page->GetMinSize()) {
+    Redistribute(page, sibling_page, parent_page, node_index == 0);  // Redistribute with sibling
+  } else {
+    Merge(page, sibling_page);  // Merge with sibling
+  }
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+void BPLUSTREE_TYPE::Redistribute(BPlusTreePage *receiver_generic, BPlusTreePage *giver_generic, InternalPage *parent,
+                                  bool receiver_is_leftmost) {}
+
+INDEX_TEMPLATE_ARGUMENTS
+void BPLUSTREE_TYPE::Merge(BPlusTreePage *receiver, BPlusTreePage *giver) {}
 
 /*****************************************************************************
  * INDEX ITERATOR
@@ -283,7 +344,21 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key, Transaction *txn) {
  * @return : index iterator
  */
 INDEX_TEMPLATE_ARGUMENTS
-auto BPLUSTREE_TYPE::Begin() -> INDEXITERATOR_TYPE { return INDEXITERATOR_TYPE(); }
+auto BPLUSTREE_TYPE::Begin() -> INDEXITERATOR_TYPE {
+  ReadPageGuard guard = bpm_->FetchPageRead(header_page_id_);
+  page_id_t root_id = GetRootPageId();
+  if (root_id == INVALID_PAGE_ID) {
+    return INDEXITERATOR_TYPE(bpm_, INVALID_PAGE_ID, 0);
+  }
+  guard = bpm_->FetchPageRead(root_id);
+  auto page = guard.template As<BPlusTreePage>();
+  while (!page->IsLeafPage()) {
+    auto internal_page = reinterpret_cast<const InternalPage *>(page);
+    guard = bpm_->FetchPageRead(internal_page->ValueAt(0));
+    page = guard.template As<BPlusTreePage>();
+  }
+  return INDEXITERATOR_TYPE(bpm_, guard.PageId(), 0);
+}
 
 /*
  * Input parameter is low key, find the leaf page that contains the input key
@@ -291,7 +366,23 @@ auto BPLUSTREE_TYPE::Begin() -> INDEXITERATOR_TYPE { return INDEXITERATOR_TYPE()
  * @return : index iterator
  */
 INDEX_TEMPLATE_ARGUMENTS
-auto BPLUSTREE_TYPE::Begin(const KeyType &key) -> INDEXITERATOR_TYPE { return INDEXITERATOR_TYPE(); }
+auto BPLUSTREE_TYPE::Begin(const KeyType &key) -> INDEXITERATOR_TYPE {
+  page_id_t leaf_page_id = FindLeafNode(key);
+
+  if (leaf_page_id == INVALID_PAGE_ID) {
+    // The tree is empty or something went wrong. Return an "end" iterator.
+    return End();
+  }
+
+  // Fetch the leaf page
+  auto page_guard = bpm_->FetchPageRead(leaf_page_id);
+  auto leaf_page = page_guard.template As<LeafPage>();  // NOLINT
+
+  // Find the position of the key in the leaf page
+  int key_position = leaf_page->FindPosition(key, comparator_);
+
+  return INDEXITERATOR_TYPE(bpm_, leaf_page_id, key_position);
+}
 
 /*
  * Input parameter is void, construct an index iterator representing the end
@@ -299,7 +390,7 @@ auto BPLUSTREE_TYPE::Begin(const KeyType &key) -> INDEXITERATOR_TYPE { return IN
  * @return : index iterator
  */
 INDEX_TEMPLATE_ARGUMENTS
-auto BPLUSTREE_TYPE::End() -> INDEXITERATOR_TYPE { return INDEXITERATOR_TYPE(); }
+auto BPLUSTREE_TYPE::End() -> INDEXITERATOR_TYPE { return INDEXITERATOR_TYPE(bpm_, INVALID_PAGE_ID, 0); }
 
 /**
  * @return Page id of the root of this tree
@@ -307,7 +398,7 @@ auto BPLUSTREE_TYPE::End() -> INDEXITERATOR_TYPE { return INDEXITERATOR_TYPE(); 
 INDEX_TEMPLATE_ARGUMENTS
 auto BPLUSTREE_TYPE::GetRootPageId() -> page_id_t {
   ReadPageGuard guard = bpm_->FetchPageRead(header_page_id_);
-  auto root_page = guard.As<BPlusTreeHeaderPage>();
+  auto root_page = guard.template As<BPlusTreeHeaderPage>();
   return root_page->root_page_id_;
 }
 

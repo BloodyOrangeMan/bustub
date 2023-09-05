@@ -87,6 +87,12 @@ class BPlusTree {
   // Remove a key and its value from this B+ tree.
   void Remove(const KeyType &key, Transaction *txn);
 
+  void RedistributeOrMerge(BPlusTreePage *page);
+
+  void Redistribute(BPlusTreePage *receiver_generic, BPlusTreePage *giver_generic, InternalPage *parent,
+                    bool receiver_is_leftmost);
+
+  void Merge(BPlusTreePage *receiver, BPlusTreePage *giver);
   // Return the value associated with a given key
   auto GetValue(const KeyType &key, std::vector<ValueType> *result, Transaction *txn = nullptr) -> bool;
 

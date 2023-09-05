@@ -83,6 +83,7 @@ class BPlusTreeInternalPage : public BPlusTreePage {
   auto FindInsertPosition(const KeyType &key, const KeyComparator &comparator) const -> int;
   auto FindChildIndex(const KeyType &key, const KeyComparator &comparator) const -> int;
   void InsertAt(int position, const KeyType &key, page_id_t child_id);
+  void Remove(int index);
 
   /**
    * @brief For test only, return a string representing all keys in
